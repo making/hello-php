@@ -93,6 +93,7 @@ jobs:
   - get: repo
     passed:
     - deploy-venerable
+    trigger: true
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
@@ -189,7 +190,7 @@ params:
     CF_PASSWORD: ((cf-password))
     CF_ORG: ((cf-org))
     CF_SPACE: ((cf-space))
-    APPS_DOMAIN: cfapps.io
+    APPS_DOMAIN: {{apps-domain}}
   rolling: &ROLLING
     platform: linux
     image_resource:
@@ -209,7 +210,7 @@ params:
         app_name=$(bosh int repo/manifest.yml --path '/applications/0/name')
         venerable_name=${app_name}-venerable
 
-        cf api ${CF_API}
+        cf api ${CF_API} --skip-ssl-validation
         cf auth ${CF_USERNAME} ${CF_PASSWORD}
         cf target -o ${CF_ORG} -s ${CF_SPACE}
         CURRENT=${CURRENT_CURRENT}
