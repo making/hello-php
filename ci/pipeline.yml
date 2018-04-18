@@ -179,7 +179,7 @@ jobs:
           cf unmap-route ${venerable_name} ${APPS_DOMAIN} --hostname ${venerable_name}
           
           cf stop ${app_name}
-          cf d -r -f ${old_name}
+          cf d -f ${old_name}
           cf rename ${app_name} ${old_name}
           cf rename ${venerable_name} ${app_name}
 params:
