@@ -2,5 +2,5 @@ applications:
 - name: hello-php-demo
   buildpack: php_buildpack
   memory: 64m
-  disk_quota: 128M
+  disk_quota: 256M
   instances: 10
