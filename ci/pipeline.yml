@@ -97,9 +97,7 @@ jobs:
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
-      CURRENT_CURRENT: 10
       CURRENT_DESIRED: 8
-      VENERABLE_CURRENT: 0
       VENERABLE_DESIRED: 2
       INTERVAL_SECONDS: 5
     config:
@@ -113,9 +111,7 @@ jobs:
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
-      CURRENT_CURRENT: 8
       CURRENT_DESIRED: 5
-      VENERABLE_CURRENT: 2
       VENERABLE_DESIRED: 5
       INTERVAL_SECONDS: 5
     config:
@@ -129,9 +125,7 @@ jobs:
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
-      CURRENT_CURRENT: 5
       CURRENT_DESIRED: 0
-      VENERABLE_CURRENT: 5
       VENERABLE_DESIRED: 10
       INTERVAL_SECONDS: 5
     config:
@@ -146,11 +140,6 @@ jobs:
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
-      CURRENT_CURRENT: 5
-      CURRENT_DESIRED: 0
-      VENERABLE_CURRENT: 5
-      VENERABLE_DESIRED: 10
-      INTERVAL_SECONDS: 5
     config:
       platform: linux
       image_resource:
@@ -171,11 +160,7 @@ jobs:
           venerable_name=${app_name}-venerable
           old_name=${app_name}-old
 
-          cf api ${CF_API}
-          cf auth ${CF_USERNAME} ${CF_PASSWORD}
-          cf target -o ${CF_ORG} -s ${CF_SPACE}
-          CURRENT=${CURRENT_CURRENT}
-          VENERABLE=${VENERABLE_CURRENT}
+          cf login -a ${CF_API} --skip-ssl-validation -u ${CF_USERNAME} -p ${CF_PASSWORD} -o ${CF_ORG} -s ${CF_SPACE}
 
           cf unmap-route ${venerable_name} ${APPS_DOMAIN} --hostname ${venerable_name}
           
@@ -210,11 +195,11 @@ params:
         app_name=$(bosh int repo/manifest.yml --path '/applications/0/name')
         venerable_name=${app_name}-venerable
 
-        cf api ${CF_API} --skip-ssl-validation
-        cf auth ${CF_USERNAME} ${CF_PASSWORD}
-        cf target -o ${CF_ORG} -s ${CF_SPACE}
-        CURRENT=${CURRENT_CURRENT}
-        VENERABLE=${VENERABLE_CURRENT}
+        cf login -a ${CF_API} --skip-ssl-validation -u ${CF_USERNAME} -p ${CF_PASSWORD} -o ${CF_ORG} -s ${CF_SPACE}
+        space_guid=$(cf space ${CF_SPACE} --guid)
+
+        CURRENT=`cf curl "/v2/apps?q=name%3A${app_name}&q=space_guid%3A${space_guid}" | jq -r '.resources[0].entity.instances'`
+        VENERABLE=`cf curl "/v2/apps?q=name%3A${venerable_name}&q=space_guid%3A${space_guid}" | jq -r '.resources[0].entity.instances'`
 
         cf map-route ${venerable_name} ${APPS_DOMAIN} --hostname ${app_name}
         
