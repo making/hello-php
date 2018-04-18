@@ -1,0 +1,235 @@
+---
+resources:
+- name: repo
+  type: git
+  source:
+    uri: git@github.com:making/hello-php.git
+    private_key: ((github-private-key))
+    branch: master
+- name: cf
+  type: cf
+  source:
+    api: ((cf-api))
+    username: ((cf-username))
+    password: ((cf-password))
+    organization: ((cf-org))
+    space: ((cf-space))
+    skip_cert_check: true
+jobs:
+- name: bootstrap
+  serial: true
+  plan:
+  - get: repo
+  - task: update-manifest
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: orangecloudfoundry/orange-cf-bosh-cli
+      inputs:
+      - name: repo
+      outputs:
+      - name: build
+      run:
+        path: bash
+        args:
+        - -c
+        - |
+          set -e
+          cp repo/manifest.yml build
+  - put: cf
+    params:
+      manifest: build/manifest.yml
+      path: repo
+      current_app_name: hello-php-demo
+      show_app_log: true
+- name: deploy-venerable
+  serial: true
+  plan:
+  - get: repo
+    trigger: true
+  - task: update-manifest
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: orangecloudfoundry/orange-cf-bosh-cli
+      inputs:
+      - name: repo
+      outputs:
+      - name: build
+      run:
+        path: bash
+        args:
+        - -c
+        - |
+          set -e
+          app_name=$(bosh int repo/manifest.yml --path '/applications/0/name')
+          echo "update manifest for $app_name"
+          bosh int repo/manifest.yml \
+            -o <(cat <<EOF
+          - type: replace
+            path: /applications/0/name
+            value: ${app_name}-venerable
+          EOF
+          ) \
+            -o <(cat <<EOF
+          - type: replace
+            path: /applications/0/instances
+            value: 1
+          EOF
+          ) > build/manifest.yml
+          cat build/manifest.yml
+  - put: cf
+    params:
+      manifest: build/manifest.yml
+      path: repo
+      show_app_log: true
+- name: roll-20percent
+  serial: true
+  plan:
+  - get: repo
+    passed:
+    - deploy-venerable
+  - task: rolling
+    params: &CF_PARAMS
+      <<: *CF_PARAMS
+      CURRENT_CURRENT: 10
+      CURRENT_DESIRED: 8
+      VENERABLE_CURRENT: 0
+      VENERABLE_DESIRED: 2
+      INTERVAL_SECONDS: 5
+    config:
+      <<: *ROLLING
+- name: roll-50percent
+  serial: true
+  plan:
+  - get: repo
+    passed:
+    - roll-20percent
+  - task: rolling
+    params: &CF_PARAMS
+      <<: *CF_PARAMS
+      CURRENT_CURRENT: 8
+      CURRENT_DESIRED: 5
+      VENERABLE_CURRENT: 2
+      VENERABLE_DESIRED: 5
+      INTERVAL_SECONDS: 5
+    config:
+      <<: *ROLLING
+- name: roll-100percent
+  serial: true
+  plan:
+  - get: repo
+    passed:
+    - roll-50percent
+  - task: rolling
+    params: &CF_PARAMS
+      <<: *CF_PARAMS
+      CURRENT_CURRENT: 5
+      CURRENT_DESIRED: 0
+      VENERABLE_CURRENT: 5
+      VENERABLE_DESIRED: 10
+      INTERVAL_SECONDS: 5
+    config:
+      <<: *ROLLING
+- name: switch
+  serial: true
+  plan:
+  - get: repo
+    passed:
+    - roll-100percent
+    trigger: true
+  - task: rolling
+    params: &CF_PARAMS
+      <<: *CF_PARAMS
+      CURRENT_CURRENT: 5
+      CURRENT_DESIRED: 0
+      VENERABLE_CURRENT: 5
+      VENERABLE_DESIRED: 10
+      INTERVAL_SECONDS: 5
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: orangecloudfoundry/orange-cf-bosh-cli
+      inputs:
+      - name: repo
+      outputs:
+      - name: build
+      run:
+        path: bash
+        args:
+        - -c
+        - |
+          set -e
+          app_name=$(bosh int repo/manifest.yml --path '/applications/0/name')
+          venerable_name=${app_name}-venerable
+          old_name=${app_name}-old
+
+          cf api ${CF_API}
+          cf auth ${CF_USERNAME} ${CF_PASSWORD}
+          cf target -o ${CF_ORG} -s ${CF_SPACE}
+          CURRENT=${CURRENT_CURRENT}
+          VENERABLE=${VENERABLE_CURRENT}
+
+          cf unmap-route ${venerable_name} ${APPS_DOMAIN} --hostname ${venerable_name}
+          
+          cf stop ${app_name}
+          cf d -r -f ${old_name}
+          cf rename ${app_name} ${old_name}
+          cf rename ${venerable_name} ${app_name}
+params:
+  cf: &CF_PARAMS
+    CF_API: ((cf-api))
+    CF_USERNAME: ((cf-username))
+    CF_PASSWORD: ((cf-password))
+    CF_ORG: ((cf-org))
+    CF_SPACE: ((cf-space))
+    APPS_DOMAIN: cfapps.io
+  rolling: &ROLLING
+    platform: linux
+    image_resource:
+      type: docker-image
+      source:
+        repository: orangecloudfoundry/orange-cf-bosh-cli
+    inputs:
+    - name: repo
+    outputs:
+    - name: build
+    run:
+      path: bash
+      args:
+      - -c
+      - |
+        set -e
+        app_name=$(bosh int repo/manifest.yml --path '/applications/0/name')
+        venerable_name=${app_name}-venerable
+
+        cf api ${CF_API}
+        cf auth ${CF_USERNAME} ${CF_PASSWORD}
+        cf target -o ${CF_ORG} -s ${CF_SPACE}
+        CURRENT=${CURRENT_CURRENT}
+        VENERABLE=${VENERABLE_CURRENT}
+
+        cf map-route ${venerable_name} ${APPS_DOMAIN} --hostname ${app_name}
+        
+        echo "FROM: CURRENT=${CURRENT}, VENERABLE=${VENERABLE}"
+        echo "TO  : CURRENT=${CURRENT_DESIRED}, VENERABLE=${VENERABLE_DESIRED}"
+        while [[ ${CURRENT} -gt ${CURRENT_DESIRED} || ${VENERABLE} -lt ${VENERABLE_DESIRED} ]];do
+          if [ ${CURRENT} -gt ${CURRENT_DESIRED} ];then
+            CURRENT=$(($CURRENT - 1))
+          fi
+          if [ ${VENERABLE} -lt ${VENERABLE_DESIRED} ];then
+            VENERABLE=$(($VENERABLE + 1))
+          fi
+          echo "CURRENT=${CURRENT}, VENERABLE=${VENERABLE}"
+          cf scale ${venerable_name} -i ${VENERABLE}
+          cf scale ${app_name}       -i ${CURRENT}
+          sleep ${INTERVAL_SECONDS}
+        done
+        cf app ${app_name}
+        cf app ${venerable_name}
