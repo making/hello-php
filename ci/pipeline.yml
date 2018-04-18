@@ -17,7 +17,7 @@ resources:
     skip_cert_check: true
 jobs:
 - name: bootstrap
-  serial: true
+  serial_groups: [deploy]
   plan:
   - get: repo
   - task: update-manifest
@@ -45,7 +45,7 @@ jobs:
       current_app_name: hello-php-demo
       show_app_log: true
 - name: deploy-venerable
-  serial: true
+  serial_groups: [deploy]
   plan:
   - get: repo
     trigger: true
@@ -87,13 +87,26 @@ jobs:
       manifest: build/manifest.yml
       path: repo
       show_app_log: true
-- name: roll-20percent
-  serial: true
+- name: roll-0percent
+  serial_groups: [deploy]
   plan:
   - get: repo
     passed:
     - deploy-venerable
-    trigger: true
+  - task: rolling
+    params: &CF_PARAMS
+      <<: *CF_PARAMS
+      CURRENT_DESIRED: 10
+      VENERABLE_DESIRED: 0
+      INTERVAL_SECONDS: 5
+    config:
+      <<: *ROLLING
+- name: roll-20percent
+  serial_groups: [deploy]
+  plan:
+  - get: repo
+    passed:
+    - deploy-venerable
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
@@ -103,11 +116,11 @@ jobs:
     config:
       <<: *ROLLING
 - name: roll-50percent
-  serial: true
+  serial_groups: [deploy]
   plan:
   - get: repo
     passed:
-    - roll-20percent
+    - deploy-venerable
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
@@ -116,12 +129,26 @@ jobs:
       INTERVAL_SECONDS: 5
     config:
       <<: *ROLLING
-- name: roll-100percent
-  serial: true
+- name: roll-80percent
+  serial_groups: [deploy]
   plan:
   - get: repo
     passed:
-    - roll-50percent
+    - deploy-venerable
+  - task: rolling
+    params: &CF_PARAMS
+      <<: *CF_PARAMS
+      CURRENT_DESIRED: 2
+      VENERABLE_DESIRED: 8
+      INTERVAL_SECONDS: 5
+    config:
+      <<: *ROLLING
+- name: roll-100percent
+  serial_groups: [deploy]
+  plan:
+  - get: repo
+    passed:
+    - deploy-venerable
   - task: rolling
     params: &CF_PARAMS
       <<: *CF_PARAMS
@@ -131,13 +158,13 @@ jobs:
     config:
       <<: *ROLLING
 - name: switch
-  serial: true
+  serial_groups: [deploy]
   plan:
   - get: repo
     passed:
     - roll-100percent
     trigger: true
-  - task: rolling
+  - task: switch
     params: &CF_PARAMS
       <<: *CF_PARAMS
     config:
@@ -164,8 +191,8 @@ jobs:
 
           cf unmap-route ${venerable_name} ${APPS_DOMAIN} --hostname ${venerable_name}
           
-          cf stop ${app_name}
           cf d -f ${old_name}
+          cf stop ${app_name}
           cf rename ${app_name} ${old_name}
           cf rename ${venerable_name} ${app_name}
 params:
@@ -205,9 +232,15 @@ params:
         
         echo "FROM: CURRENT=${CURRENT}, VENERABLE=${VENERABLE}"
         echo "TO  : CURRENT=${CURRENT_DESIRED}, VENERABLE=${VENERABLE_DESIRED}"
-        while [[ ${CURRENT} -gt ${CURRENT_DESIRED} || ${VENERABLE} -lt ${VENERABLE_DESIRED} ]];do
+        while [[ ${CURRENT} != ${CURRENT_DESIRED} || ${VENERABLE} != ${VENERABLE_DESIRED} ]];do
           if [ ${CURRENT} -gt ${CURRENT_DESIRED} ];then
             CURRENT=$(($CURRENT - 1))
+          fi
+          if [ ${CURRENT} -lt ${CURRENT_DESIRED} ];then
+            CURRENT=$(($CURRENT + 1))
+          fi
+          if [ ${VENERABLE} -gt ${VENERABLE_DESIRED} ];then
+            VENERABLE=$(($VENERABLE - 1))
           fi
           if [ ${VENERABLE} -lt ${VENERABLE_DESIRED} ];then
             VENERABLE=$(($VENERABLE + 1))
