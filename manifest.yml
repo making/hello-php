@@ -1,0 +1,5 @@
+applications:
+- name: hello-php-demo
+  buildpack: php_buildpack
+  memory: 64m
+  instances: 5
